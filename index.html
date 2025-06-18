@@ -29,6 +29,8 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            width: 38px;
+            height: 38px;
         }
 
         .tts-button:hover {
@@ -203,7 +205,7 @@
             speakNextChunk(resolve, reject) {
                 if (this.currentChunkIndex >= this.textChunks.length) {
                     this.isSpeaking = false;
-                    this.setButtonState('default', 'Read Prompt');
+                    this.setButtonState('default');
                     resolve();
                     return;
                 }
@@ -219,21 +221,22 @@
                 // Set up event handlers
                 utterance.onstart = () => {
                     this.isSpeaking = true;
-                    const progress = `${this.currentChunkIndex + 1}/${this.textChunks.length}`;
-                    this.setButtonState('speaking', `Stop (${progress})`);
+                    this.setButtonState('speaking');
                 };
 
                 utterance.onend = () => {
                     this.currentChunkIndex++;
                     // Small delay between chunks to prevent issues
                     setTimeout(() => {
-                        this.speakNextChunk(resolve, reject);
+                        if (this.isSpeaking) { // Check if we were stopped during timeout
+                            this.speakNextChunk(resolve, reject);
+                        }
                     }, 100);
                 };
 
                 utterance.onerror = (event) => {
                     this.isSpeaking = false;
-                    this.setButtonState('default', 'Read Prompt');
+                    this.setButtonState('default');
                     reject(new Error(`Speech synthesis error: ${event.error}`));
                 };
 
@@ -248,22 +251,31 @@
                 this.isSpeaking = false;
                 this.textChunks = [];
                 this.currentChunkIndex = 0;
-                this.setButtonState('default', 'Read Prompt');
+                this.setButtonState('default');
             }
 
-            setButtonState(state, text) {
-                this.button.innerHTML = `
-                    <svg class="speaker-icon" viewBox="0 0 24 24">
-                        <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11zm-5.5-2.5L9 15l1.5-1.5L12 15l1.5-1.5L15 15l-1.5 1.5-.75-.75-.75.75zm0-3L9 12l1.5-1.5L12 12l1.5-1.5L15 12l-1.5 1.5-.75-.75-.75.75zm0-3L9 9l1.5-1.5L12 9l1.5-1.5L15 9l-1.5 1.5-.75-.75-.75.75z"/>
-                    </svg>
-                    ${text}
-                `;
+            setButtonState(state) {
+                if (state === 'speaking') {
+                    this.button.innerHTML = `
+                        <svg class="speaker-icon" viewBox="0 0 24 24" fill="currentColor">
+                           <path d="M0 0h24v24H0z" fill="none"/>
+                           <path d="M6 6h12v12H6z"/>
+                        </svg>
+                    `;
+                } else {
+                     this.button.innerHTML = `
+                        <svg class="speaker-icon" viewBox="0 0 24 24">
+                            <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11zm-5.5-2.5L9 15l1.5-1.5L12 15l1.5-1.5L15 15l-1.5 1.5-.75-.75-.75.75zm0-3L9 12l1.5-1.5L12 12l1.5-1.5L15 12l-1.5 1.5-.75-.75-.75.75zm0-3L9 9l1.5-1.5L12 9l1.5-1.5L15 9l-1.5 1.5-.75-.75-.75.75z"/>
+                        </svg>
+                    `;
+                }
             }
         }
 
         // Initialize the prompt reader when the page loads
         document.addEventListener('DOMContentLoaded', () => {
-            new WebSimPromptReader();
+            const reader = new WebSimPromptReader();
+            reader.setButtonState('default'); // Set initial state
         });
 
         // Handle page visibility changes to stop speech when tab is hidden
