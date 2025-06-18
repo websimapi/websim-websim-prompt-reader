@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSim Prompt Reader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            position: relative;
+        }
+
+        .tts-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border: none;
+            border-radius: 50px;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 1000;
+        }
+
+        .tts-button:hover {
+            background: rgba(255, 255, 255, 1);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .tts-button:active {
+            transform: translateY(0);
+        }
+
+        .tts-button.speaking {
+            background: rgba(255, 107, 107, 0.9);
+            color: white;
+        }
+
+        .tts-button.loading {
+            background: rgba(255, 193, 7, 0.9);
+            color: white;
+        }
+
+        .speaker-icon {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
+        }
+
+        .info-panel {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+            max-height: 300px;
+            overflow-y: auto;
+            transform: translateY(100%);
+            transition: transform 0.3s ease;
+        }
+
+        .info-panel.visible {
+            transform: translateY(0);
+        }
+
+        .info-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .info-content {
+            font-size: 14px;
+            color: #666;
+            line-height: 1.5;
+        }
+
+        .error-message {
+            color: #e74c3c;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <button class="tts-button" id="ttsButton">
+        <svg class="speaker-icon" viewBox="0 0 24 24">
+            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+        </svg>
+        Read Prompt
+    </button>
+
+    <div class="info-panel" id="infoPanel">
+        <div class="info-title">Current Page Prompt</div>
+        <div class="info-content" id="infoContent">
+            Click "Read Prompt" to load and speak the current page's prompt...
+        </div>
+    </div>
+
+    <script>
+        class WebSimPromptReader {
+            constructor() {
+                this.button = document.getElementById('ttsButton');
+                this.infoPanel = document.getElementById('infoPanel');
+                this.infoContent = document.getElementById('infoContent');
+                this.synth = window.speechSynthesis;
+                this.currentUtterance = null;
+                this.isSpeaking = false;
+
+                this.button.addEventListener('click', () => this.handleButtonClick());
+                
+                // Show info panel on load
+                setTimeout(() => {
+                    this.infoPanel.classList.add('visible');
+                }, 500);
+            }
+
+            async handleButtonClick() {
+                if (this.isSpeaking) {
+                    this.stopSpeaking();
+                    return;
+                }
+
+                try {
+                    this.setButtonState('loading', 'Loading...');
+                    const promptData = await this.getCurrentPrompt();
+                    
+                    if (promptData) {
+                        this.updateInfoPanel(promptData);
+                        await this.speakPrompt(promptData.prompt);
+                    } else {
+                        throw new Error('No prompt found for current page');
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    this.showError(error.message);
+                    this.setButtonState('default', 'Read Prompt');
+                }
+            }
+
+            async getCurrentPrompt() {
+                try {
+                    // Get current project info
+                    const currentProject = await window.websim.getCurrentProject();
+                    if (!currentProject) {
+                        throw new Error('No current project found');
+                    }
+
+                    // Get project details with current version
+                    const response = await fetch(`/api/v1/projects/${currentProject.id}`);
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch project details');
+                    }
+
+                    const projectData = await response.json();
+                    const site = projectData.site;
+                    
+                    if (!site || !site.prompt) {
+                        throw new Error('No prompt found for this page');
+                    }
+
+                    // Extract prompt text based on prompt type
+                    let promptText = '';
+                    if (site.prompt && site.prompt.text) {
+                        promptText = site.prompt.text;
+                    } else if (typeof site.prompt === 'string') {
+                        promptText = site.prompt;
+                    } else {
+                        throw new Error('Prompt format not recognized');
+                    }
+
+                    return {
+                        projectId: currentProject.id,
+                        title: currentProject.title || site.title || 'Untitled',
+                        prompt: promptText,
+                        promptType: site.prompt.type || 'unknown',
+                        version: projectData.project_revision?.version || 'current',
+                        url: window.location.href
+                    };
+
+                } catch (error) {
+                    console.error('Error getting current prompt:', error);
+                    throw error;
+                }
+            }
+
+            updateInfoPanel(data) {
+                this.infoContent.innerHTML = `
+                    <div style="margin-bottom: 12px;">
+                        <strong>Project:</strong> ${data.title}<br>
+                        <strong>Version:</strong> ${data.version}<br>
+                        <strong>Prompt Type:</strong> ${data.promptType}
+                    </div>
+                    <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; border-left: 3px solid #667eea;">
+                        <strong>Prompt:</strong><br>
+                        ${data.prompt.length > 300 ? data.prompt.substring(0, 300) + '...' : data.prompt}
+                    </div>
+                `;
+            }
+
+            async speakPrompt(text) {
+                return new Promise((resolve, reject) => {
+                    if (!text || text.trim() === '') {
+                        reject(new Error('No text to speak'));
+                        return;
+                    }
+
+                    // Cancel any existing speech
+                    this.synth.cancel();
+
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    
+                    // Configure speech settings
+                    utterance.rate = 0.9;
+                    utterance.pitch = 1;
+                    utterance.volume = 0.8;
+
+                    // Set up event handlers
+                    utterance.onstart = () => {
+                        this.isSpeaking = true;
+                        this.setButtonState('speaking', 'Stop Speaking');
+                    };
+
+                    utterance.onend = () => {
+                        this.isSpeaking = false;
+                        this.setButtonState('default', 'Read Prompt');
+                        resolve();
+                    };
+
+                    utterance.onerror = (event) => {
+                        this.isSpeaking = false;
+                        this.setButtonState('default', 'Read Prompt');
+                        reject(new Error(`Speech synthesis error: ${event.error}`));
+                    };
+
+                    this.currentUtterance = utterance;
+                    this.synth.speak(utterance);
+                });
+            }
+
+            stopSpeaking() {
+                if (this.synth.speaking) {
+                    this.synth.cancel();
+                }
+                this.isSpeaking = false;
+                this.setButtonState('default', 'Read Prompt');
+            }
+
+            setButtonState(state, text) {
+                this.button.className = `tts-button ${state === 'default' ? '' : state}`;
+                this.button.innerHTML = `
+                    <svg class="speaker-icon" viewBox="0 0 24 24">
+                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                    </svg>
+                    ${text}
+                `;
+            }
+
+            showError(message) {
+                this.infoContent.innerHTML = `
+                    <div class="error-message">
+                        <strong>Error:</strong> ${message}
+                    </div>
+                `;
+            }
+        }
+
+        // Initialize the prompt reader when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new WebSimPromptReader();
+        });
+
+        // Handle page visibility changes to stop speech when tab is hidden
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && window.speechSynthesis.speaking) {
+                window.speechSynthesis.cancel();
+            }
+        });
+    </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
+
