@@ -128,6 +128,8 @@
                 this.synth = window.speechSynthesis;
                 this.currentUtterance = null;
                 this.isSpeaking = false;
+                this.textChunks = [];
+                this.currentChunkIndex = 0;
 
                 this.button.addEventListener('click', () => this.handleButtonClick());
                 
@@ -220,6 +222,63 @@
                 `;
             }
 
+            splitTextIntoChunks(text, maxLength = 200) {
+                if (text.length <= maxLength) {
+                    return [text];
+                }
+
+                const chunks = [];
+                const sentences = text.split(/([.!?]\s+)/);
+                let currentChunk = '';
+
+                for (let i = 0; i < sentences.length; i++) {
+                    const sentence = sentences[i];
+                    
+                    // If adding this sentence would exceed the limit
+                    if (currentChunk.length + sentence.length > maxLength) {
+                        if (currentChunk.trim()) {
+                            chunks.push(currentChunk.trim());
+                            currentChunk = sentence;
+                        } else {
+                            // Single sentence is too long, split by line breaks
+                            const lines = sentence.split(/\n+/);
+                            for (const line of lines) {
+                                if (line.trim()) {
+                                    if (line.length > maxLength) {
+                                        // Split by words if still too long
+                                        const words = line.split(/\s+/);
+                                        let wordChunk = '';
+                                        for (const word of words) {
+                                            if (wordChunk.length + word.length + 1 > maxLength) {
+                                                if (wordChunk.trim()) {
+                                                    chunks.push(wordChunk.trim());
+                                                }
+                                                wordChunk = word;
+                                            } else {
+                                                wordChunk += (wordChunk ? ' ' : '') + word;
+                                            }
+                                        }
+                                        if (wordChunk.trim()) {
+                                            chunks.push(wordChunk.trim());
+                                        }
+                                    } else {
+                                        chunks.push(line.trim());
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        currentChunk += sentence;
+                    }
+                }
+
+                if (currentChunk.trim()) {
+                    chunks.push(currentChunk.trim());
+                }
+
+                return chunks.filter(chunk => chunk.length > 0);
+            }
+
             async speakPrompt(text) {
                 return new Promise((resolve, reject) => {
                     if (!text || text.trim() === '') {
@@ -227,37 +286,56 @@
                         return;
                     }
 
+                    // Split text into manageable chunks
+                    this.textChunks = this.splitTextIntoChunks(text);
+                    this.currentChunkIndex = 0;
+
                     // Cancel any existing speech
                     this.synth.cancel();
 
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    
-                    // Configure speech settings
-                    utterance.rate = 0.9;
-                    utterance.pitch = 1;
-                    utterance.volume = 0.8;
-
-                    // Set up event handlers
-                    utterance.onstart = () => {
-                        this.isSpeaking = true;
-                        this.setButtonState('speaking', 'Stop Speaking');
-                    };
-
-                    utterance.onend = () => {
-                        this.isSpeaking = false;
-                        this.setButtonState('default', 'Read Prompt');
-                        resolve();
-                    };
-
-                    utterance.onerror = (event) => {
-                        this.isSpeaking = false;
-                        this.setButtonState('default', 'Read Prompt');
-                        reject(new Error(`Speech synthesis error: ${event.error}`));
-                    };
-
-                    this.currentUtterance = utterance;
-                    this.synth.speak(utterance);
+                    this.speakNextChunk(resolve, reject);
                 });
+            }
+
+            speakNextChunk(resolve, reject) {
+                if (this.currentChunkIndex >= this.textChunks.length) {
+                    this.isSpeaking = false;
+                    this.setButtonState('default', 'Read Prompt');
+                    resolve();
+                    return;
+                }
+
+                const chunk = this.textChunks[this.currentChunkIndex];
+                const utterance = new SpeechSynthesisUtterance(chunk);
+                
+                // Configure speech settings
+                utterance.rate = 0.9;
+                utterance.pitch = 1;
+                utterance.volume = 0.8;
+
+                // Set up event handlers
+                utterance.onstart = () => {
+                    this.isSpeaking = true;
+                    const progress = `${this.currentChunkIndex + 1}/${this.textChunks.length}`;
+                    this.setButtonState('speaking', `Stop (${progress})`);
+                };
+
+                utterance.onend = () => {
+                    this.currentChunkIndex++;
+                    // Small delay between chunks to prevent issues
+                    setTimeout(() => {
+                        this.speakNextChunk(resolve, reject);
+                    }, 100);
+                };
+
+                utterance.onerror = (event) => {
+                    this.isSpeaking = false;
+                    this.setButtonState('default', 'Read Prompt');
+                    reject(new Error(`Speech synthesis error: ${event.error}`));
+                };
+
+                this.currentUtterance = utterance;
+                this.synth.speak(utterance);
             }
 
             stopSpeaking() {
@@ -265,6 +343,8 @@
                     this.synth.cancel();
                 }
                 this.isSpeaking = false;
+                this.textChunks = [];
+                this.currentChunkIndex = 0;
                 this.setButtonState('default', 'Read Prompt');
             }
 
@@ -302,4 +382,3 @@
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
-
